@@ -1,35 +1,24 @@
-from  object_extractor import *
-from pathlib import Path
-from skimage import io, color, filters, morphology
-from scipy import ndimage as ndi
-from matplotlib.backends.backend_pdf import PdfPages
-import matplotlib.pyplot as plt
+from process import Cell_segmentation, ImgFormat
 
-#pic = objectExtractor("pictures/light_pick20.tif")
-#pic.plot_results()
-folder = Path('pictures')
-tifs   = sorted(folder.glob('*.tif'))
-counter = 0
+##### Prepared Use cases #####
+
+# Segment multiple pictures in CZI format
+# more little cells on one picture, lower sigma value recomended
+#c = Cell_segmentation(False, "Cell-segmentation/zeiss_pics", ImgFormat.CZI, "czi_segmentations_4perpage.pdf", 0.4)
+# -----------------------------------------------------------
 
 
-with PdfPages('combined_masks.pdf') as pdf:
-    for tif in sorted(folder.glob('*.tif')):
-        print(counter)
-        counter += 1
-        extractor = objectExtractor(str(tif))
-        fig = extractor.plot_results()        # your original Figure
-        pdf.savefig(fig, dpi=600, bbox_inches='tight')
-        plt.close(fig)
+# Segment multiple pictures in TIF format
+# less bigger cells on one picture, higher sigma value recomended
+#c = Cell_segmentation(False, "Cell-segmentation/pics", ImgFormat.TIF, "tif_combined.pdf")
+# -----------------------------------------------------------
 
-# 2) Combine them into single PDF
-pdf_path = folder / "combined_masks.pdf"
-with PdfPages(str(pdf_path)) as pdf:
-    for mask_png in sorted(folder.glob('*_mask.png')):
-        fig, ax = plt.subplots()
-        ax.imshow(io.imread(str(mask_png)), cmap='gray')
-        ax.axis('off')
-        pdf.savefig(fig, bbox_inches='tight')
-        plt.close(fig)
+# Segment and plot single picture in TIF format
+p = "Cell-segmentation/pics/light_pick22.tif"
+c = Cell_segmentation(True, p, ImgFormat.TIF, "")
+# -----------------------------------------------------------
 
 
-
+# Segment and plot single picture in CZI format
+k = "Cell-segmentation/zeiss_pics/Snap-6293.czi"
+#c = Cell_segmentation(True, k, ImgFormat.CZI, "")
