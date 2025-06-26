@@ -5,10 +5,15 @@ from scipy import ndimage as ndi
 from skimage.measure import regionprops
 from skimage.measure._regionprops import RegionProperties
 from skimage.morphology import disk
+from scipy.ndimage import binary_fill_holes
+from skimage.segmentation import mark_boundaries
+from skimage.segmentation import find_boundaries
+from skimage.morphology import binary_dilation, disk
+import numpy.ma as ma
+from matplotlib.colors import ListedColormap
 
 
-
-def select_the_most_regular(props, labels, min_area_convex=15000):
+def select_the_most_regular(props, labels, k, min_area_convex=15000):
     props = regionprops(labels)
     # only keep regions big enough
     valid = [p for p in props if p.area_convex > min_area_convex]
@@ -17,26 +22,26 @@ def select_the_most_regular(props, labels, min_area_convex=15000):
 
     # initialize on the first valid region
     best = valid[0]
-    best_euler = abs(best.euler_number)
 
-    # 1) pick smallest euler among valid
     for obj in valid:
-        if abs(obj.euler_number) < best_euler:
-            best_euler = abs(obj.euler_number)
+        if obj.filled_area == obj.area:
             best = obj
 
-    # 2) if tie on euler, pick the one with larger convex area
-    for obj in valid:
-        if abs(obj.euler_number) == best_euler and obj.area_convex > best.area_convex:
+        if obj.area_convex > best.area_convex:
             best = obj
 
-    return best.label
+
+    if best.area > 7600:
+        print(f"---------------------------------")
+        print(f"Chosen Euler: {best.euler_number}")
+        print(f"Best k: {k:.1f}")
+        return best.label
 
 
 class objectExtractor:
-    def __init__(self, image_path=None, image_array=None,noise_suppression_var=0.05, sigma_value=1.6):
+    def __init__(self, image_path=None, image_array=None,noise_suppression_var=0.04, sigma_value=1.6):
         self.counter = 0
-
+        self.sigma_value = sigma_value
         # --- load image ---
         if image_array is not None:
             img = image_array.copy()
@@ -60,65 +65,76 @@ class objectExtractor:
             self.gray = img
 
         # Gaussian filter for background noise suppression
-        self.gray_smooth = filters.gaussian(self.gray, sigma=sigma_value)
+        self.gray_smooth = filters.gaussian(self.gray, sigma=self.sigma_value)
         self.grey_smooth = exposure.rescale_intensity(self.gray_smooth, out_range=(0,1))
 
         # Niblack thresholding
-        self.thresh = filters.threshold_niblack(self.gray_smooth)
+        self.k = 0.7
+        self.thresh = filters.threshold_niblack(self.gray_smooth, k=self.k)
         #self.thresh = filters.threshold_otsu(self.gray_smooth)
 
         self.binary_global = None
-        result = self.make_binary(noise_suppression_var)
+        result = self.make_binary(noise_suppression_var, self.sigma_value)
         if result is None:
             self.props, self.labels = [], np.zeros_like(self.binary_global, dtype=int)
             return
         else:
             self.props, self.labels = result
 
-        # check and adjust largest object regularity, if euler not equal to one, lower noise suppression variable
+        # check and adjust largest object regularity
         self.candidate = largest = max(self.props, key=lambda p: p.area).label
         object: RegionProperties = self.adjust_largest_object_regularity(self.props, self.labels, noise_suppression_var, largest)
         if object.euler_number < -8:
-            self.props, self.labels = self.make_binary(noise_suppression_var)
-            best = select_the_most_regular(self.props, self.labels)
+            self.props, self.labels = self.make_binary(noise_suppression_var, self.sigma_value)
+            best = select_the_most_regular(self.props, self.labels, self.k)
             self.candidate = best
             self.adjust_largest_object_regularity(self.props, self.labels, noise_suppression_var, best)
 
-    def adjust_largest_object_regularity(self, props, labels, noise_suppression_var, canditate) -> RegionProperties:
+    def adjust_largest_object_regularity(self, props, labels, noise_suppression_var, candidate):
         props = regionprops(labels)
-        if canditate is None:
-            return None
-        p = next(p for p in props if p.label == canditate)
+        # find your starting p
+        p = next(p for p in props if p.label == candidate)
+        best_p = p
+        best_euler = abs(p.euler_number)
+       
 
-        print(f"Area Convex     : {p.area_convex:.2f}")
-        print(f"Euler           : {p.euler_number:.2f}")
+        while self.k > -0.5:
+            self.k -= 0.1
+            #while p.euler_number != 0 and noise_suppression_var > 0.005:
+                # try a smaller threshold
+            #noise_suppression_var -= 0.005
+            props, labels = self.make_binary(noise_suppression_var, self.sigma_value)
+            regions = regionprops(labels)
+            p = next(r for r in regions if r.label == candidate)
 
-        previous_euler = p.euler_number
+            curr_euler = abs(p.euler_number)
+            # if this is strictly better, update best_p
+            if p.filled_area == p.area:
+                print("Filled area is equal to area")
+                best_p = p
+                break
 
-        while p.euler_number != 0.00 and self.check_if_better(previous_euler, p.euler_number) and noise_suppression_var > 0.005:
-            previous_euler = p.euler_number
-            noise_suppression_var -= 0.005
-            props, labels = self.make_binary(noise_suppression_var)
-            largest = max(props, key=lambda p: p.area).label
-            props = regionprops(labels)
-            p = next(p for p in props if p.label == largest)
+            if curr_euler < best_euler:
+                best_euler = curr_euler
+                best_p = p
+            
+            else:
+                # we got worse or equal: stop refining
+                break
+    
+        print(f"---------------------------------")
+        print(f"Chosen Euler: {best_p.euler_number}")
+        print(f"Best k: {self.k:.1f}")
+        
+        self.props = regionprops(labels)    # re-label based on best_p
+        self.labels = labels                # keep the labels from best_p’s iteration
+        return best_p
 
-            print(f"Area Convex     : {p.area_convex:.2f}")
-            print(f"Euler           : {p.euler_number:.2f}  ")
-
-        print("-----------\n")
-        self.props = props
-        self.labels = labels
-
-        return p
 
 
     def check_if_better(self, previous_euler, current_euler):
-        if previous_euler < 0:
+        if previous_euler < 1:
             if previous_euler > current_euler:
-                return False
-        if previous_euler > 0:
-            if previous_euler < current_euler:
                 return False
 
         return  True
@@ -126,9 +142,13 @@ class objectExtractor:
     def get_all_objects(self):
         return self.props
 
-    def make_binary(self, noise_suppression_var):
+    def make_binary(self, noise_suppression_var, sigma):
+        self.gray_smooth = filters.gaussian(self.gray, sigma)
+        self.grey_smooth = exposure.rescale_intensity(self.gray_smooth, out_range=(0,1))
+
         # 1) Threshold to binary
         self.binary_global = self.gray_smooth - noise_suppression_var > self.thresh
+        self.thresh = filters.threshold_niblack(self.gray_smooth, k=self.k)
 
         # 2) Remove small objects (noise) and fill small holes
         cleaned = morphology.remove_small_objects(self.binary_global, min_size=500)
@@ -162,31 +182,48 @@ class objectExtractor:
         props       = regionprops(self.labels)
         best_labels = []
         for _ in range(n_best):
-            lbl = select_the_most_regular(props, labels_copy)
+            lbl = select_the_most_regular(props, labels_copy, self.k)
             if lbl is None:
                 break
             best_labels.append(lbl)
             labels_copy[labels_copy == lbl] = 0
 
-        # 2) build one combined binary mask
-        combined_mask = np.isin(self.labels, best_labels)
+        # 2) build one combined label‐mask
+        selected = np.isin(self.labels, best_labels).astype(int)
 
-        # 3) plot
-        fig, axes = plt.subplots(1, 2, figsize=(10,5))
+        # fill all selected regions (won’t merge, since label regions are separate)
+        filled = binary_fill_holes(selected)
+
+        # find pixel‐wide boundaries between labels
+        bnd = find_boundaries(selected, mode='inner')
+        # make them a little thicker
+        bnd = binary_dilation(bnd, disk(1))
+
+        fig, axes = plt.subplots(1, 3, figsize=(12,4))
         for ax in axes:
             ax.axis('off')
 
-        # Original image on left
         axes[0].imshow(self.original, cmap='gray')
         axes[0].set_title(f'Original image {image_name}')
 
-        # segmented image on right
-        axes[1].imshow(combined_mask, cmap='gray')
-        axes[1].set_title(f"Top {len(best_labels)} regions")
+        #axes[1].imshow(self.labels>0, cmap='gray')
+        #axes[1].set_title(f"Top {len(best_labels)} regions")
+        axes[1].imshow(filled, cmap='gray', vmin=0, vmax=1)
+        axes[1].set_facecolor('black')
+
+        # Panel 3: black bg, white fill
+        axes[2].imshow(filled, cmap='gray', vmin=0, vmax=1)
+        axes[2].set_facecolor('black')
+
+        # contour at 0.5 boundary
+        axes[2].contour(
+            bnd,               # or combined_mask_filled
+            levels=[0.5],
+            colors='red',
+            linewidths=1
+        )
 
         plt.tight_layout()
         if do_plot:
             plt.show()
         return fig
-
-
