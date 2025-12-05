@@ -46,14 +46,17 @@ class objectExtractor:
         else:
             img = io.imread(image_path)
 
-        self.original = img
+
 
         # now img is a float array in [0,1]
         if img.dtype != np.float32 and img.dtype != np.float64:
             img = util.img_as_float(img)
 
+
+
         img = (img - img.min()) / (img.max() - img.min())
 
+        self.original = img
         # if 3‐channel, convert to gray; if already 2D, leave as is
         if img.ndim == 3 and img.shape[2] in (3,4):
             # RGB or RGBA
@@ -64,7 +67,11 @@ class objectExtractor:
 
         # Gaussian filter for background noise suppression
         self.gray_smooth = filters.gaussian(self.gray, sigma=sigma_value)
-        self.grey_smooth = exposure.rescale_intensity(self.gray_smooth, out_range=(0,1))
+        self.gray_smooth = exposure.rescale_intensity(self.gray_smooth, out_range=(0,1))
+
+
+
+
 
         # Niblack thresholding
         self.thresh = filters.threshold_niblack(self.gray_smooth, k=self.k)
@@ -95,8 +102,8 @@ class objectExtractor:
         best_p = p
         best_euler = abs(p.euler_number)
 
-        print(f"Area Convex     : {p.area_convex:.2f}")
-        print(f"Euler           : {p.euler_number:.2f}")
+        #print(f"Area Convex     : {p.area_convex:.2f}")
+        #print(f"Euler           : {p.euler_number:.2f}")
 
         previous_euler = p.euler_number
 
@@ -112,8 +119,8 @@ class objectExtractor:
                 best_euler = p.euler_number
                 best_p = p
 
-            print(f"Area Convex     : {p.area_convex:.2f}")
-            print(f"Euler           : {p.euler_number:.2f}  ")
+            #print(f"Area Convex     : {p.area_convex:.2f}")
+            #print(f"Euler           : {p.euler_number:.2f}  ")
 
         #self.props = props
         self.props = regionprops(labels)    # re-label based on best_p
@@ -163,9 +170,10 @@ class objectExtractor:
             print("No object was detected")
             return None
 
+
         return props, labels
 
-    def plot_results(self, image_name = '', n_best=10, do_plot=False):
+    def plot_results(self, image_name = '', n_best=45, do_plot=False):
         # 1) select the top labels
         labels_copy = self.labels.copy()
         props       = regionprops(self.labels)
@@ -179,7 +187,10 @@ class objectExtractor:
 
         # 2) build one combined label‐mask
         selected = np.isin(self.labels, best_labels).astype(int)
-
+        plt.imshow(selected, cmap='gray', vmin=0, vmax=1)
+        plt.title(f'After Niblack thresholding')
+        plt.axis('off')
+        #plt.show()
         # fill all selected regions (won’t merge, since label regions are separate)
         filled = binary_fill_holes(selected)
 
@@ -194,15 +205,18 @@ class objectExtractor:
 
         axes[0].imshow(self.original, cmap='gray')
         axes[0].set_title(f'Original image {image_name}')
+        plt.imsave("poster/original_poster.png", self.original, cmap="gray", vmin=0, vmax=1)
 
         #axes[1].imshow(self.labels>0, cmap='gray')
         #axes[1].set_title(f"Top {len(best_labels)} regions")
         axes[1].imshow(filled, cmap='gray', vmin=0, vmax=1)
         axes[1].set_facecolor('black')
 
+
         # Panel 3: black bg, white fill
         axes[2].imshow(filled, cmap='gray', vmin=0, vmax=1)
         axes[2].set_facecolor('black')
+        plt.imsave("poster/binary_poster.png", filled, cmap="gray", vmin=0, vmax=1)
 
         # contour at 0.5 boundary
         axes[2].contour(
@@ -212,10 +226,26 @@ class objectExtractor:
             linewidths=1
         )
 
+        fig, ax = plt.subplots(figsize=(5,5))
+
+        ax.imshow(filled, cmap="gray", vmin=0, vmax=1)
+        ax.contour(bnd, levels=[0.5], colors="red", linewidths=1)
+
+        ax.axis("off")                 # no ticks, no frame
+        plt.margins(0)                # no extra margins around data
+        fig.subplots_adjust(0, 0, 1, 1)  # use full canvas
+
+        fig.savefig(
+            "./poster/contour_only.png",
+            dpi=300,
+            bbox_inches="tight",
+            pad_inches=0,              # 👈 remove white border
+        )
+        plt.close(fig)
+
         plt.tight_layout()
         if do_plot:
             plt.show()
         return fig
-
 
 
