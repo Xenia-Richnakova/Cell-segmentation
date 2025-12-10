@@ -12,9 +12,8 @@ from skimage.measure import regionprops
 import numpy as np
 from skimage.filters import gaussian
 
+path = "./moreCells.tif"
 
-path = "./1355-8xK_gal_4822.tif"
-#path = "./moreCells.tif"
 
 
 SX_X = [1, 0, -1]   # horizontal X
@@ -40,7 +39,7 @@ class EdgeFinder:
         self.img = imread(self.path)
         self.img_grayscale = color.rgb2gray(self.img)
 
-        seg = objectExtractor(image_path=self.path)
+        seg = objectExtractor(image_path=self.path, )
         self.img_grayscale = seg.gray_smooth
 
         best_labels = self.gradually_select_best(seg)
@@ -79,15 +78,11 @@ class EdgeFinder:
         return self.convolve(SY_Y, tmp, "y")
 
     def gradient_magnitude(self):
-        # |magn| = sqrt(dx^2 + dy^2)
-        mag = allocate_arr(self.H, self.W)
+        dx = ndi.sobel(self.img_grayscale, axis=1) # Horizontal
+        dy = ndi.sobel(self.img_grayscale, axis=0) # Vertical
 
-        dx = self.gradient_x()
-        dy = self.gradient_y()
-        for y in range(self.H):
-            for x in range(self.W):
-                mag[y][x] = dx[y][x] ** 2 + dy[y][x] ** 2
-                #mag[y][x] = math.sqrt(dx[y][x] ** 2 + dy[y][x] ** 2) * 2
+        # Calculate magnitude
+        mag = np.hypot(dx, dy)
 
         return mag
 
@@ -104,10 +99,10 @@ class EdgeFinder:
 
         return best_labels
 
-    def consider_largest_regions(self, props):
+    def consider_largest_regions(self, props, min_area=4000):
         big_regions = []
         for p in props:
-            if p.area >= 4000 and p.perimeter > 1100:
+            if p.area >= min_area and p.perimeter > 1100:
                 big_regions.append(p)
 
         return big_regions
@@ -128,11 +123,18 @@ class EdgeFinder:
                 ha="center",
                 va="center"
             )
+        return fig
 
-        ax.axis("off")
-        plt.tight_layout()
-        plt.show()
+    def show_heat_map(self):
+        mask = self.seg > 0
+        distance = ndi.distance_transform_edt(mask).astype(float)
+        fig, ax = plt.subplots(figsize=(6, 6))
 
+
+        # Show the segmentation or grayscale
+        ax.imshow(distance, cmap="inferno")
+        plt.scatter(*self.coords.T[::-1])
+        return fig
 
     def watershed(self, min_distance=20, sigma_dist=4.0):
         mask = self.seg > 0
@@ -140,47 +142,22 @@ class EdgeFinder:
         distance = ndi.distance_transform_edt(mask).astype(float)
         distance_smooth = gaussian(distance, sigma=sigma_dist)
 
-        coords = peak_local_max(
+
+        self.coords = peak_local_max(
             distance_smooth,
             labels=mask,
             min_distance=min_distance
         )
 
         seed_img = np.zeros_like(mask, dtype=bool)
-        seed_img[tuple(coords.T)] = True
+        seed_img[tuple(self.coords.T)] = True
         markers = label(seed_img)
 
         mag = np.array(self.gradient_magnitude(), dtype=float)
 
-        labels_ws = watershed(mag, markers=markers, mask=mask)
+        labels_ws = watershed(-distance, markers=markers, mask=mask, watershed_line=True)
         return labels_ws, markers
 
 
-    def show(self, image=None):
-        data = image if image is not None else self.img_grayscale
-        plt.imshow(data, cmap="gray", vmin=0.0, vmax=1.0)
-        plt.axis("off")
-        plt.show()
 
-
-start = time.time()
-
-pic = EdgeFinder(path)
-labels, markers = pic.watershed(min_distance=2, sigma_dist=5.0)
-
-# Measure watershed regions
-props = regionprops(labels)
-areas = np.array([p.area for p in props])
-
-# --- Area distribution ---
-print("Number of watershed regions:", len(props))
-print("Smallest / largest area:", areas.min(), areas.max())
-
-big_regions = pic.consider_largest_regions(props)
-print("Number of BIG regions (cells):", len(big_regions))
-
-pic.plot_cells_w_numbers(labels, big_regions)
-
-end = time.time()
-print("Elapsed:", end - start, "seconds")
 
