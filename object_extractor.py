@@ -7,6 +7,7 @@ from skimage.measure._regionprops import RegionProperties
 from scipy.ndimage import binary_fill_holes
 from skimage.segmentation import find_boundaries
 from skimage.morphology import binary_dilation, disk
+from czifile import CziFile
 
 
 
@@ -42,7 +43,9 @@ class objectExtractor:
 
         # --- load image ---
         if image_array is not None:
-            img = image_array.copy()
+            czi  = CziFile(self.path)
+            data = czi.asarray()
+            img = data[0, :, :, 0]
         else:
             img = io.imread(image_path)
 
@@ -173,13 +176,13 @@ class objectExtractor:
 
         return props, labels
 
-    def plot_results(self, image_name = '', n_best=45, do_plot=False):
+    def plot_results(self):
         # 1) select the top labels
         labels_copy = self.labels.copy()
-        props       = regionprops(self.labels)
+        properties       = regionprops(self.labels)
         best_labels = []
-        for _ in range(n_best):
-            lbl = select_the_most_regular(props, labels_copy)
+        for _ in range(20):
+            lbl = select_the_most_regular(properties, labels_copy)
             if lbl is None:
                 break
             best_labels.append(lbl)
@@ -187,65 +190,15 @@ class objectExtractor:
 
         # 2) build one combined label‐mask
         selected = np.isin(self.labels, best_labels).astype(int)
-        plt.imshow(selected, cmap='gray', vmin=0, vmax=1)
-        plt.title(f'After Niblack thresholding')
-        plt.axis('off')
-        #plt.show()
-        # fill all selected regions (won’t merge, since label regions are separate)
+
+
         filled = binary_fill_holes(selected)
-
         # find pixel‐wide boundaries between labels
-        bnd = find_boundaries(selected, mode='inner')
-        # make them a little thicker
-        bnd = binary_dilation(bnd, disk(1))
+        bnd = find_boundaries(selected, mode='thick')
 
-        fig, axes = plt.subplots(1, 3, figsize=(12,4))
-        for ax in axes:
-            ax.axis('off')
-
-        axes[0].imshow(self.original, cmap='gray')
-        axes[0].set_title(f'Original image {image_name}')
-        plt.imsave("poster/original_poster.png", self.original, cmap="gray", vmin=0, vmax=1)
-
-        #axes[1].imshow(self.labels>0, cmap='gray')
-        #axes[1].set_title(f"Top {len(best_labels)} regions")
-        axes[1].imshow(filled, cmap='gray', vmin=0, vmax=1)
-        axes[1].set_facecolor('black')
-
-
-        # Panel 3: black bg, white fill
-        axes[2].imshow(filled, cmap='gray', vmin=0, vmax=1)
-        axes[2].set_facecolor('black')
-        plt.imsave("poster/binary_poster.png", filled, cmap="gray", vmin=0, vmax=1)
-
-        # contour at 0.5 boundary
-        axes[2].contour(
-            bnd,               # or combined_mask_filled
-            levels=[0.5],
-            colors='red',
-            linewidths=1
-        )
-
-        fig, ax = plt.subplots(figsize=(5,5))
-
-        ax.imshow(filled, cmap="gray", vmin=0, vmax=1)
-        ax.contour(bnd, levels=[0.5], colors="red", linewidths=1)
-
-        ax.axis("off")                 # no ticks, no frame
-        plt.margins(0)                # no extra margins around data
-        fig.subplots_adjust(0, 0, 1, 1)  # use full canvas
-
-        fig.savefig(
-            "./poster/contour_only.png",
-            dpi=300,
-            bbox_inches="tight",
-            pad_inches=0,              # 👈 remove white border
-        )
-        plt.close(fig)
-
-        plt.tight_layout()
-        if do_plot:
-            plt.show()
+        fig, ax = plt.subplots()
+        ax.imshow(bnd, cmap="gray")
+        ax.set_axis_off()
         return fig
 
 

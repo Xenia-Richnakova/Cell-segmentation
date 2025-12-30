@@ -11,8 +11,13 @@ from skimage.segmentation import watershed
 from skimage.measure import regionprops
 import numpy as np
 from skimage.filters import gaussian
+from czifile import CziFile
+from skimage.segmentation import find_boundaries
+from skimage.morphology import binary_erosion, disk
+from skimage.measure import label as cc_label
 
 path = "./moreCells.tif"
+#path = "Snap-6962.czi"
 
 
 
@@ -36,10 +41,20 @@ def allocate_arr(H, W) -> list:
 class EdgeFinder:
     def __init__(self, img_path):
         self.path = img_path
-        self.img = imread(self.path)
-        self.img_grayscale = color.rgb2gray(self.img)
+
+        if ".czi" in self.path:
+            czi  = CziFile(self.path)
+            self.img = czi.asarray()
+            #self.img = data[0, :, :, 0]
+        else:
+            self.img = imread(self.path)
+
+
+        #self.img_grayscale = color.rgb2gray(self.img)
+        self.img_grayscale = self.img
 
         seg = objectExtractor(image_path=self.path, )
+
         self.img_grayscale = seg.gray_smooth
 
         best_labels = self.gradually_select_best(seg)
@@ -48,6 +63,7 @@ class EdgeFinder:
         selected = np.isin(seg.labels, best_labels).astype(int)
 
         self.seg = binary_fill_holes(selected)
+
 
         self.H, self.W = self.img_grayscale.shape
 
@@ -76,6 +92,12 @@ class EdgeFinder:
     def gradient_y(self):
         tmp = self.convolve(SY_X, self.img_grayscale, "x")
         return self.convolve(SY_Y, tmp, "y")
+
+    def gradient_magnitude_laplacian(self, img):
+        img_s = gaussian(img)          # reduce noise
+        lap = ndi.laplace(img_s)                    # Laplacian (2nd derivative)
+        mag = np.abs(lap).astype(float)             # make it non-negative
+        return mag
 
     def gradient_magnitude(self):
         dx = ndi.sobel(self.img_grayscale, axis=1) # Horizontal
@@ -136,6 +158,78 @@ class EdgeFinder:
         plt.scatter(*self.coords.T[::-1])
         return fig
 
+
+
+    def plot_ws_overlay(self, labels_ws):
+        boundaries = find_boundaries(labels_ws, mode="outer")
+
+        fig, ax = plt.subplots(figsize=(6, 6))
+
+        # Background image
+        ax.imshow(self.img_grayscale, cmap="gray")
+
+        # Overlay boundaries
+        ax.imshow(boundaries, cmap="Reds", alpha=0.6)
+
+        # Number each segmented region
+        regions = regionprops(labels_ws)
+
+        for i, region in enumerate(regions, start=1):
+            y, x = region.centroid
+            ax.text(
+                x, y,
+                str(i),
+                color="yellow",
+                fontsize=12,
+                weight="bold",
+                ha="center",
+                va="center"
+            )
+
+        ax.axis("off")
+        return fig
+
+
+    def watershed(self, min_distance=20, sigma_dist=4.0, alpha=0.7, sigma_mag=1.0):
+        mask = self.seg > 0
+        distance = ndi.distance_transform_edt(mask).astype(float)
+        distance_smooth = gaussian(distance, sigma=sigma_dist)
+
+        self.coords = peak_local_max(
+            distance_smooth,
+            labels=mask,
+            min_distance=min_distance)
+
+        seed_img = np.zeros_like(mask, dtype=bool)
+        seed_img[tuple(self.coords.T)] = True
+        markers = label(seed_img)
+
+        # gradient magnitude
+        mag = self.gradient_magnitude_laplacian(self.img_grayscale)
+        mag = gaussian(mag, sigma=sigma_mag)
+        # normalize BOTH to 0..1
+
+        dist_n = (distance_smooth - distance_smooth.min()) / (np.ptp(distance_smooth) + 1e-9)
+        mag_n  = (mag - mag.min()) / (np.ptp(mag) + 1e-9)
+
+        mag_n = mag_n * mask
+        mag_n = mag_n * (dist_n**0.5)
+
+        elevation = (1 - alpha) * (1 - dist_n) + alpha * mag_n
+        labels_ws = watershed(elevation, markers=markers, mask=mask, watershed_line=False)
+
+
+        fig, ax = plt.subplots(1, 3, figsize=(12, 4))
+        ax[0].imshow(dist_n, cmap="viridis")
+        ax[0].set_title("Distance")
+        ax[1].imshow(mag_n, cmap="inferno")
+        ax[1].set_title("Gradient")
+        ax[2].imshow(elevation, cmap="gray")
+        ax[2].set_title("Elevation (combined)")
+        plt.show()
+        return labels_ws, markers
+
+    '''
     def watershed(self, min_distance=20, sigma_dist=4.0):
         mask = self.seg > 0
 
@@ -157,6 +251,7 @@ class EdgeFinder:
 
         labels_ws = watershed(-distance, markers=markers, mask=mask, watershed_line=True)
         return labels_ws, markers
+        '''
 
 
 
