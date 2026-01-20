@@ -37,13 +37,13 @@ def select_the_most_regular(props, labels, min_area_convex=15000):
 
 
 class objectExtractor:
-    def __init__(self, image_path=None, image_array=None,noise_suppression_var=0.05, sigma_value=1.6, k=0.2):
+    def __init__(self, image_path=None, image_czi=False, noise_suppression_var=0.05, sigma_value=1.6, k=0.2):
         self.k = k
         self.counter = 0
 
         # --- load image ---
-        if image_array is not None:
-            czi  = CziFile(self.path)
+        if image_czi:
+            czi  = CziFile(image_path)
             data = czi.asarray()
             img = data[0, :, :, 0]
         else:
@@ -155,11 +155,11 @@ class objectExtractor:
 
         # 3) Further clean-up: close narrow gaps
         selem = disk(3)
-        cleaned = morphology.binary_closing(cleaned, selem)
+        cleaned = morphology.closing(cleaned, selem)
 
         # 4) A little dilation to thicken the mask
         selem2 = disk(1)
-        cleaned = morphology.binary_dilation(cleaned, selem2)
+        cleaned = morphology.dilation(cleaned, selem2)
 
         # 5) Label and compute regionprops
         labels, num = ndi.label(cleaned)

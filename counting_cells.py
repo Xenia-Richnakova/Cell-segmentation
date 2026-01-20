@@ -1,8 +1,6 @@
 from tifffile import imread
 import matplotlib.pyplot as plt
-from skimage import color
 from scipy.ndimage import binary_fill_holes
-import time
 from object_extractor import objectExtractor, select_the_most_regular
 from scipy import ndimage as ndi
 from skimage.feature import peak_local_max
@@ -13,59 +11,47 @@ import numpy as np
 from skimage.filters import gaussian
 from czifile import CziFile
 from skimage.segmentation import find_boundaries
-from skimage.morphology import binary_erosion, disk
-from skimage.measure import label as cc_label
+from PIL import Image
 
-path = "./moreCells.tif"
-#path = "Snap-6962.czi"
-
-
-
-SX_X = [1, 0, -1]   # horizontal X
-SX_Y = [
-    [1],
-    [2],
-    [1]
-]   # vertical X
-
-SY_X = [1, 2, 1]   # horizontal Y
-SY_Y = [
-    [1],
-    [0],
-    [-1]
-]   # vertical Y
 
 def allocate_arr(H, W) -> list:
     return [[0.0 for _ in range(W)] for _ in range(H)]
+
 
 class EdgeFinder:
     def __init__(self, img_path):
         self.path = img_path
 
         if ".czi" in self.path:
-            czi  = CziFile(self.path)
-            self.img = czi.asarray()
-            #self.img = data[0, :, :, 0]
+            self.img = CziFile(self.path).asarray()
+            avg_brightness = float(np.mean(self.img))
+            print("Average brightness:", avg_brightness)
+            arr = np.squeeze(self.img)   # remove singleton dimensions
+            self.img = arr
+
+
+            plt.figure(figsize=(6, 6))
+            plt.imshow(self.img, cmap="gray")
+            plt.axis("off")
+            plt.show()
+
+            seg = objectExtractor(image_path=self.path, image_czi=True)
         else:
             self.img = imread(self.path)
+            seg = objectExtractor(image_path=self.path)
 
 
-        #self.img_grayscale = color.rgb2gray(self.img)
-        self.img_grayscale = self.img
-
-        seg = objectExtractor(image_path=self.path, )
-
+        #seg = objectExtractor(image_path=self.path)
         self.img_grayscale = seg.gray_smooth
 
         best_labels = self.gradually_select_best(seg)
 
         # Build one combined label‐mask
         selected = np.isin(seg.labels, best_labels).astype(int)
-
         self.seg = binary_fill_holes(selected)
 
-
         self.H, self.W = self.img_grayscale.shape
+        self.coords = None
 
     def convolve(self, kernel, img, dir):
         out = allocate_arr(self.H, self.W)
@@ -85,32 +71,15 @@ class EdgeFinder:
 
         return out
 
-    def gradient_x(self):
-        tmp = self.convolve(SX_X, self.img_grayscale, "x")
-        return self.convolve(SX_Y, tmp, "y")
-
-    def gradient_y(self):
-        tmp = self.convolve(SY_X, self.img_grayscale, "x")
-        return self.convolve(SY_Y, tmp, "y")
-
-    def gradient_magnitude_laplacian(self, img):
-        img_s = gaussian(img)          # reduce noise
-        lap = ndi.laplace(img_s)                    # Laplacian (2nd derivative)
-        mag = np.abs(lap).astype(float)             # make it non-negative
-        return mag
-
     def gradient_magnitude(self):
-        dx = ndi.sobel(self.img_grayscale, axis=1) # Horizontal
-        dy = ndi.sobel(self.img_grayscale, axis=0) # Vertical
-
-        # Calculate magnitude
+        dx = ndi.sobel(self.img_grayscale, axis=1)  # Horizontal
+        dy = ndi.sobel(self.img_grayscale, axis=0)  # Vertical
         mag = np.hypot(dx, dy)
-
         return mag
 
     def gradually_select_best(self, seg, num_of_best=20):
         labels_copy = seg.labels.copy()
-        props       = regionprops(seg.labels)
+        props = regionprops(seg.labels)
         best_labels = []
         for _ in range(num_of_best):
             lbl = select_the_most_regular(props, labels_copy)
@@ -118,7 +87,6 @@ class EdgeFinder:
                 break
             best_labels.append(lbl)
             labels_copy[labels_copy == lbl] = 0
-
         return best_labels
 
     def consider_largest_regions(self, props, min_area=4000):
@@ -126,116 +94,48 @@ class EdgeFinder:
         for p in props:
             if p.area >= min_area and p.perimeter > 1100:
                 big_regions.append(p)
-
         return big_regions
 
     def plot_cells_w_numbers(self, labels, big_regions):
         fig, ax = plt.subplots(figsize=(6, 6))
-        # Show the segmentation or grayscale
         ax.imshow(labels, cmap="nipy_spectral")
-        # ax.imshow(pic.img_grayscale, cmap="gray")
-
         for i, region in enumerate(big_regions, start=1):
             y, x = region.centroid
-            ax.text(
-                x, y,
-                str(i),
-                color="white",
-                fontsize=13,
-                ha="center",
-                va="center"
-            )
+            ax.text(x, y, str(i), color="white", fontsize=13, ha="center", va="center")
         return fig
 
     def show_heat_map(self):
         mask = self.seg > 0
         distance = ndi.distance_transform_edt(mask).astype(float)
         fig, ax = plt.subplots(figsize=(6, 6))
-
-
-        # Show the segmentation or grayscale
         ax.imshow(distance, cmap="inferno")
-        plt.scatter(*self.coords.T[::-1])
+        if self.coords is not None and len(self.coords) > 0:
+            plt.scatter(*self.coords.T[::-1])
         return fig
-
-
 
     def plot_ws_overlay(self, labels_ws):
         boundaries = find_boundaries(labels_ws, mode="outer")
-
         fig, ax = plt.subplots(figsize=(6, 6))
-
-        # Background image
         ax.imshow(self.img_grayscale, cmap="gray")
-
-        # Overlay boundaries
         ax.imshow(boundaries, cmap="Reds", alpha=0.6)
 
-        # Number each segmented region
         regions = regionprops(labels_ws)
-
         for i, region in enumerate(regions, start=1):
             y, x = region.centroid
-            ax.text(
-                x, y,
-                str(i),
-                color="yellow",
-                fontsize=12,
-                weight="bold",
-                ha="center",
-                va="center"
-            )
+            ax.text(x, y, str(i), color="yellow", fontsize=12, weight="bold",
+                    ha="center", va="center")
 
         ax.axis("off")
         return fig
 
-
-    def watershed(self, min_distance=20, sigma_dist=4.0, alpha=0.7, sigma_mag=1.0):
-        mask = self.seg > 0
-        distance = ndi.distance_transform_edt(mask).astype(float)
-        distance_smooth = gaussian(distance, sigma=sigma_dist)
-
-        self.coords = peak_local_max(
-            distance_smooth,
-            labels=mask,
-            min_distance=min_distance)
-
-        seed_img = np.zeros_like(mask, dtype=bool)
-        seed_img[tuple(self.coords.T)] = True
-        markers = label(seed_img)
-
-        # gradient magnitude
-        mag = self.gradient_magnitude_laplacian(self.img_grayscale)
-        mag = gaussian(mag, sigma=sigma_mag)
-        # normalize BOTH to 0..1
-
-        dist_n = (distance_smooth - distance_smooth.min()) / (np.ptp(distance_smooth) + 1e-9)
-        mag_n  = (mag - mag.min()) / (np.ptp(mag) + 1e-9)
-
-        mag_n = mag_n * mask
-        mag_n = mag_n * (dist_n**0.5)
-
-        elevation = (1 - alpha) * (1 - dist_n) + alpha * mag_n
-        labels_ws = watershed(elevation, markers=markers, mask=mask, watershed_line=False)
-
-
-        fig, ax = plt.subplots(1, 3, figsize=(12, 4))
-        ax[0].imshow(dist_n, cmap="viridis")
-        ax[0].set_title("Distance")
-        ax[1].imshow(mag_n, cmap="inferno")
-        ax[1].set_title("Gradient")
-        ax[2].imshow(elevation, cmap="gray")
-        ax[2].set_title("Elevation (combined)")
-        plt.show()
-        return labels_ws, markers
-
-    '''
-    def watershed(self, min_distance=20, sigma_dist=4.0):
+    # ----------------------------
+    # NEW: proper method version
+    # ----------------------------
+    def watershed(self, min_distance=20, sigma_dist=4.0, sigma_grad=1.0):
         mask = self.seg > 0
 
         distance = ndi.distance_transform_edt(mask).astype(float)
         distance_smooth = gaussian(distance, sigma=sigma_dist)
-
 
         self.coords = peak_local_max(
             distance_smooth,
@@ -244,15 +144,65 @@ class EdgeFinder:
         )
 
         seed_img = np.zeros_like(mask, dtype=bool)
-        seed_img[tuple(self.coords.T)] = True
+        if self.coords is not None and len(self.coords) > 0:
+            seed_img[tuple(self.coords.T)] = True
         markers = label(seed_img)
 
-        mag = np.array(self.gradient_magnitude(), dtype=float)
+        mag = self.gradient_magnitude()
+        mag_smooth = gaussian(mag, sigma=sigma_grad)
 
-        labels_ws = watershed(-distance, markers=markers, mask=mask, watershed_line=True)
+        #labels_ws = watershed(
+        #    mag_smooth,
+        #    markers=markers,
+        #    mask=mask,
+        #    watershed_line=True
+        #)
+        labels_ws = watershed(-distance_smooth, markers, mask=mask)
+
         return labels_ws, markers
-        '''
 
+    # ----------------------------
+    # NEW: 0 background, cells: 255, 254, ...
+    # ----------------------------
+    @staticmethod
+    def labels_to_uint8_reverse(labels_ws: np.ndarray) -> np.ndarray:
+        """
+        Strict mapping:
+          background (0) -> 0
+          1 -> 255
+          2 -> 254
+          ...
+          255 -> 1
 
+        Assumption:
+          labels_ws contains at most 255 non-zero labels.
+          If this assumption is violated, an exception is raised.
+        """
+        labels_ws = np.asarray(labels_ws)
 
+        max_label = int(labels_ws.max())
+        if max_label > 255:
+            raise ValueError(
+                f"labels_to_uint8_reverse(): found label {max_label}, "
+                "but max allowed is 255 for 8-bit PNG export."
+            )
 
+        out = np.zeros(labels_ws.shape, dtype=np.uint8)
+
+        mask = labels_ws > 0
+        out[mask] = (256 - labels_ws[mask]).astype(np.uint8)
+
+        return out
+
+    # ----------------------------
+    # NEW: save PNG
+    # ----------------------------
+    def save_label_png(self, labels_ws: np.ndarray, out_path: str) -> str | None:
+        mapped, warning = self.labels_to_uint8_reverse(labels_ws)
+        img = Image.fromarray(mapped, mode="L")  # 8-bit grayscale
+        img.save(out_path)
+        return warning
+
+#path = "./Snap-7253.czi"
+#path = "./moreCells.tif"
+#pic = EdgeFinder(path)
