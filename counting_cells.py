@@ -1,3 +1,4 @@
+from skimage.measure._regionprops import RegionProperties
 from tifffile import imread
 import matplotlib.pyplot as plt
 from scipy.ndimage import binary_fill_holes
@@ -13,11 +14,6 @@ from czifile import CziFile
 from skimage.segmentation import find_boundaries
 from PIL import Image
 
-
-def allocate_arr(H, W) -> list:
-    return [[0.0 for _ in range(W)] for _ in range(H)]
-
-
 class EdgeFinder:
     def __init__(self, img_path):
         self.path = img_path
@@ -25,6 +21,7 @@ class EdgeFinder:
         if ".czi" in self.path:
             self.img = CziFile(self.path).asarray()
             avg_brightness = float(np.mean(self.img))
+            print("Image:", self.path)
             print("Average brightness:", avg_brightness)
             arr = np.squeeze(self.img)   # remove singleton dimensions
             self.img = arr
@@ -53,23 +50,7 @@ class EdgeFinder:
         self.H, self.W = self.img_grayscale.shape
         self.coords = None
 
-    def convolve(self, kernel, img, dir):
-        out = allocate_arr(self.H, self.W)
-        if dir == "x":
-            for r in range(1, self.H - 1):
-                for c in range(1, self.W - 1):
-                    out[r][c] = (kernel[0] * img[r - 1][c] +
-                                 kernel[1] * img[r][c] +
-                                 kernel[2] * img[r + 1][c])
 
-        if dir == "y":
-            for r in range(1, self.H - 1):
-                for c in range(1, self.W - 1):
-                    out[r][c] = (kernel[0][0] * img[r][c - 1] +
-                                 kernel[1][0] * img[r][c] +
-                                 kernel[2][0] * img[r][c + 1])
-
-        return out
 
     def gradient_magnitude(self):
         dx = ndi.sobel(self.img_grayscale, axis=1)  # Horizontal
@@ -89,7 +70,8 @@ class EdgeFinder:
             labels_copy[labels_copy == lbl] = 0
         return best_labels
 
-    def consider_largest_regions(self, props, min_area=4000):
+# predtym dobra min_area bola 4000
+    def consider_largest_regions(self, props, min_area=1000):
         big_regions = []
         for p in props:
             if p.area >= min_area and p.perimeter > 1100:
@@ -100,15 +82,42 @@ class EdgeFinder:
         fig, ax = plt.subplots(figsize=(6, 6))
         ax.imshow(labels, cmap="nipy_spectral")
         for i, region in enumerate(big_regions, start=1):
+            print(f"cell: {i} has label: {region.label}")
             y, x = region.centroid
-            ax.text(x, y, str(i), color="white", fontsize=13, ha="center", va="center")
+            ax.text(x, y, str(region.label), color="white", fontsize=13, ha="center", va="center")
+            ax.text(x, y + 170, str(i), color="gray", fontsize=13, ha="center", va="center")
+            #ax.text(x, y, str(i), color="white", fontsize=13, ha="center", va="center")
         return fig
 
-    def show_heat_map(self):
+    def show_map_for_distance_transform(self, sigma_dist=1, cmapType="inferno"):
         mask = self.seg > 0
         distance = ndi.distance_transform_edt(mask).astype(float)
+        distance_smooth = gaussian(distance, sigma=sigma_dist)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.imshow(distance_smooth, cmap=cmapType)
+        if self.coords is not None and len(self.coords) > 0:
+            plt.scatter(*self.coords.T[::-1])
+        return fig
+
+    def show_heat_map(self, sigma_dist=1):
+        mask = self.seg > 0
+        distance = ndi.distance_transform_edt(mask).astype(float)
+        distance_smooth = gaussian(distance, sigma=sigma_dist)
         fig, ax = plt.subplots(figsize=(6, 6))
         ax.imshow(distance, cmap="inferno")
+        if self.coords is not None and len(self.coords) > 0:
+            plt.scatter(*self.coords.T[::-1])
+        return fig
+
+    def show_heat_map_gradient(self, sigma_grad=10):
+        mask = self.seg > 0
+        mag = self.gradient_magnitude()
+        mag_smooth = gaussian(mag, sigma=sigma_grad)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.imshow(mag_smooth, cmap="inferno")
+
+        print(sigma_grad)
+
         if self.coords is not None and len(self.coords) > 0:
             plt.scatter(*self.coords.T[::-1])
         return fig
@@ -128,9 +137,7 @@ class EdgeFinder:
         ax.axis("off")
         return fig
 
-    # ----------------------------
-    # NEW: proper method version
-    # ----------------------------
+
     def watershed(self, min_distance=20, sigma_dist=4.0, sigma_grad=1.0):
         mask = self.seg > 0
 
@@ -151,33 +158,17 @@ class EdgeFinder:
         mag = self.gradient_magnitude()
         mag_smooth = gaussian(mag, sigma=sigma_grad)
 
-        #labels_ws = watershed(
-        #    mag_smooth,
-        #    markers=markers,
-        #    mask=mask,
-        #    watershed_line=True
-        #)
-        labels_ws = watershed(-distance_smooth, markers, mask=mask)
+        #pot = mag_smooth * distance_smooth
+        pot = mag_smooth * (1 - (distance_smooth / (distance_smooth.max() + 1e-9)))
+        labels_ws = watershed(pot, markers, mask=mask)
+
+
+        #labels_ws = watershed(-distance_smooth, markers, mask=mask)
 
         return labels_ws, markers
 
-    # ----------------------------
-    # NEW: 0 background, cells: 255, 254, ...
-    # ----------------------------
     @staticmethod
     def labels_to_uint8_reverse(labels_ws: np.ndarray) -> np.ndarray:
-        """
-        Strict mapping:
-          background (0) -> 0
-          1 -> 255
-          2 -> 254
-          ...
-          255 -> 1
-
-        Assumption:
-          labels_ws contains at most 255 non-zero labels.
-          If this assumption is violated, an exception is raised.
-        """
         labels_ws = np.asarray(labels_ws)
 
         max_label = int(labels_ws.max())
@@ -194,9 +185,6 @@ class EdgeFinder:
 
         return out
 
-    # ----------------------------
-    # NEW: save PNG
-    # ----------------------------
     def save_label_png(self, labels_ws: np.ndarray, out_path: str) -> str | None:
         mapped, warning = self.labels_to_uint8_reverse(labels_ws)
         img = Image.fromarray(mapped, mode="L")  # 8-bit grayscale
@@ -206,3 +194,6 @@ class EdgeFinder:
 #path = "./Snap-7253.czi"
 #path = "./moreCells.tif"
 #pic = EdgeFinder(path)
+
+#YPD_SD_Acetate_Day7_Acetate
+#magMag_YPGly

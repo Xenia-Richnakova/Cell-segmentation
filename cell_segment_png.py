@@ -19,8 +19,8 @@ def _():
 
 @app.cell
 def _(mo):
-    folder = mo.ui.text(value="./YPGal//", label="Folder with .czi files")
-    brightness_thr = mo.ui.number(value=1000, label="Average brightness threshold (> )")
+    folder = mo.ui.text(value="./YPD", label="Folder with .czi files")
+    brightness_thr = mo.ui.number(value=1450, label="Average brightness threshold (> )")
     ui = mo.vstack([folder, brightness_thr])
     ui
     return brightness_thr, folder
@@ -29,8 +29,8 @@ def _(mo):
 @app.cell
 def _(mo):
     sigma_val = mo.ui.slider(0.1, 10, 0.1, 3, label="Sigma (distance smoothing)")
-    sigma_grad = mo.ui.slider(0.1, 10, 0.1, 1.0, label="Sigma (gradient smoothing)")
-    min_dist = mo.ui.slider(1, 60, value=20, label="Min distance")
+    sigma_grad = mo.ui.slider(0.1, 100, 0.1, 20, label="Sigma (gradient smoothing)")
+    min_dist = mo.ui.slider(1, 300, value=200, label="Min distance")
     mo.vstack([sigma_val, sigma_grad, min_dist])
     return min_dist, sigma_grad, sigma_val
 
@@ -95,7 +95,7 @@ def _(eligible, mo):
 
 @app.cell
 def _(mo):
-    zip_name = mo.ui.text(value="filtered_pngs.zip", label="Output ZIP filename")
+    zip_name = mo.ui.text(value="filtered_pngs_YPD.zip", label="Output ZIP filename")
     zip_name
     return (zip_name,)
 
@@ -115,7 +115,7 @@ def _(
     zipfile,
 ):
     def labels_to_png_bytes(labels: np.ndarray) -> bytes:
-        # Ensure uint8 output (simple; you can swap to your reverse mapping if desired)
+        # Ensure uint8 output 
         arr = labels.astype(np.uint8)
         img = Image.fromarray(arr, mode="L")
         buf = io.BytesIO()
@@ -138,10 +138,9 @@ def _(
                     sigma_grad=sigma_grad.value,
                 )
 
-                # Optional: keep only biggest regions (your existing logic)
+                # Optional: keep only biggest regions 
                 # props = regionprops(labels)
                 # big_regions = pic.consider_largest_regions(props)
-                # (If you want to filter labels accordingly, add that here.)
 
                 png_bytes = labels_to_png_bytes(labels)
 

@@ -49,18 +49,11 @@ class objectExtractor:
         else:
             img = io.imread(image_path)
 
-
-
-        # now img is a float array in [0,1]
-        if img.dtype != np.float32 and img.dtype != np.float64:
-            img = util.img_as_float(img)
-
-
-
+        # normalize
         img = (img - img.min()) / (img.max() - img.min())
 
         self.original = img
-        # if 3‐channel, convert to gray; if already 2D, leave as is
+        # if 3‐channel, convert to gray, if already 2D, else dont change
         if img.ndim == 3 and img.shape[2] in (3,4):
             # RGB or RGBA
             self.gray = color.rgb2gray(img)
@@ -68,13 +61,9 @@ class objectExtractor:
             # already single‐channel
             self.gray = img
 
+        self.gray = img
         # Gaussian filter for background noise suppression
         self.gray_smooth = filters.gaussian(self.gray, sigma=sigma_value)
-        self.gray_smooth = exposure.rescale_intensity(self.gray_smooth, out_range=(0,1))
-
-
-
-
 
         # Niblack thresholding
         self.thresh = filters.threshold_niblack(self.gray_smooth, k=self.k)
@@ -146,26 +135,26 @@ class objectExtractor:
         return self.props
 
     def make_binary(self, noise_suppression_var):
-        # 1) Threshold to binary
+        # Threshold to binary
         self.binary_global = self.gray_smooth - noise_suppression_var > self.thresh
 
-        # 2) Remove small objects (noise) and fill small holes
-        cleaned = morphology.remove_small_objects(self.binary_global, min_size=500)
-        cleaned = morphology.remove_small_holes(cleaned, area_threshold=500)
+        # Remove small objects (noise) and fill small holes
+        cleaned = morphology.remove_small_objects(self.binary_global, max_size=500)
+        cleaned = morphology.remove_small_holes(cleaned, max_size=500)
 
-        # 3) Further clean-up: close narrow gaps
+        # Further clean-up - close narrow gaps
         selem = disk(3)
         cleaned = morphology.closing(cleaned, selem)
 
-        # 4) A little dilation to thicken the mask
+        # A little dilation to thicken the mask
         selem2 = disk(1)
         cleaned = morphology.dilation(cleaned, selem2)
 
-        # 5) Label and compute regionprops
+        # Label and compute regionprops
         labels, num = ndi.label(cleaned)
         props = regionprops(labels)
 
-        # 6) fallback if no props
+        # fallback if no props
         if len(props) == 0 and self.counter < 5:
             self.counter += 1
             return self.make_binary(noise_suppression_var - 0.005)
