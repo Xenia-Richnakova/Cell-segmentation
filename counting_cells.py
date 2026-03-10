@@ -15,7 +15,7 @@ from skimage.segmentation import find_boundaries
 from PIL import Image
 
 class EdgeFinder:
-    def __init__(self, img_path):
+    def __init__(self, img_path, k=0.2):
         self.path = img_path
 
         if ".czi" in self.path:
@@ -32,7 +32,7 @@ class EdgeFinder:
             plt.axis("off")
             plt.show()
 
-            seg = objectExtractor(image_path=self.path, image_czi=True)
+            seg = objectExtractor(image_path=self.path, image_czi=True, k=k)
         else:
             self.img = imread(self.path)
             seg = objectExtractor(image_path=self.path)
@@ -85,7 +85,7 @@ class EdgeFinder:
             print(f"cell: {i} has label: {region.label}")
             y, x = region.centroid
             ax.text(x, y, str(region.label), color="white", fontsize=13, ha="center", va="center")
-            ax.text(x, y + 170, str(i), color="gray", fontsize=13, ha="center", va="center")
+            #ax.text(x, y + 170, str(i), color="gray", fontsize=13, ha="center", va="center")
             #ax.text(x, y, str(i), color="white", fontsize=13, ha="center", va="center")
         return fig
 

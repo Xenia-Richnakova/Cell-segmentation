@@ -37,7 +37,7 @@ def select_the_most_regular(props, labels, min_area_convex=15000):
 
 
 class objectExtractor:
-    def __init__(self, image_path=None, image_czi=False, noise_suppression_var=0.05, sigma_value=1.6, k=0.2):
+    def __init__(self, image_path=None, image_czi=False, noise_suppression_var=0.05, sigma_value=1.6, k=0.3):
         self.k = k
         self.counter = 0
 

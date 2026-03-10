@@ -14,12 +14,12 @@ def _():
     import io
     import zipfile
     from PIL import Image
-    return EdgeFinder, Image, io, mo, np, os, zipfile
+    return EdgeFinder, Image, io, mo, np, os, regionprops, zipfile
 
 
 @app.cell
 def _(mo):
-    folder = mo.ui.text(value="./YPD", label="Folder with .czi files")
+    folder = mo.ui.text(value="./YPGal", label="Folder with .czi files")
     brightness_thr = mo.ui.number(value=1450, label="Average brightness threshold (> )")
     ui = mo.vstack([folder, brightness_thr])
     ui
@@ -28,11 +28,11 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    sigma_val = mo.ui.slider(0.1, 10, 0.1, 3, label="Sigma (distance smoothing)")
+
     sigma_grad = mo.ui.slider(0.1, 100, 0.1, 20, label="Sigma (gradient smoothing)")
-    min_dist = mo.ui.slider(1, 300, value=200, label="Min distance")
-    mo.vstack([sigma_val, sigma_grad, min_dist])
-    return min_dist, sigma_grad, sigma_val
+    min_dist = mo.ui.slider(1, 300, value=180, label="Min distance")
+    mo.vstack([sigma_grad, min_dist])
+    return min_dist, sigma_grad
 
 
 @app.cell
@@ -101,16 +101,57 @@ def _(mo):
 
 
 @app.cell
+def _(min_dist, regionprops, sigma_grad):
+    def isBadSolidity(big_regions):
+        for cell in big_regions:
+            if cell.solidity < 0.9:
+                return True
+        return False
+
+
+    def adjust_watershed(pic):
+        min_d = min_dist.value - 20
+        sigma_g = sigma_grad.value
+        while True:
+            min_d += 20
+            sigma_g += 2
+            labels, markers = pic.watershed(
+                min_distance=min_d,
+                sigma_grad=sigma_grad.value,
+            )
+            props = regionprops(labels)
+            big_regions = pic.consider_largest_regions(props)
+            print(f"current Min distance: {min_d}, len(bigRegions): {len(big_regions)}, len(pic.coords)): {len(pic.coords)}")
+
+            if len(big_regions) == len(pic.coords) or min_d > 200:
+                break
+
+
+
+        while (isBadSolidity(big_regions) and min_d < 280):
+            min_d += 20
+            sigma_g += 2
+            labels, markers = pic.watershed(
+                min_distance=min_d,
+                sigma_grad=sigma_grad.value,
+            )
+            props = regionprops(labels)
+            big_regions = pic.consider_largest_regions(props)
+            print(f"current Min distance: {min_d}, len(bigRegions): {len(big_regions)}, len(pic.coords)): {len(pic.coords)}")
+
+        return labels, big_regions
+    return (adjust_watershed,)
+
+
+@app.cell
 def _(
     EdgeFinder,
     Image,
+    adjust_watershed,
     eligible,
     io,
-    min_dist,
     mo,
     np,
-    sigma_grad,
-    sigma_val,
     zip_name,
     zipfile,
 ):
@@ -132,15 +173,8 @@ def _(
                 # Run segmentation pipeline
                 pic = EdgeFinder(path)
 
-                labels, markers = pic.watershed(
-                    min_distance=min_dist.value,
-                    sigma_dist=sigma_val.value,
-                    sigma_grad=sigma_grad.value,
-                )
-
-                # Optional: keep only biggest regions 
-                # props = regionprops(labels)
-                # big_regions = pic.consider_largest_regions(props)
+                labels, big_regions = adjust_watershed(pic)
+                mo.mpl.interactive(pic.plot_cells_w_numbers(labels, big_regions))
 
                 png_bytes = labels_to_png_bytes(labels)
 
