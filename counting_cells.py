@@ -14,6 +14,10 @@ from czifile import CziFile
 from skimage.segmentation import find_boundaries
 from PIL import Image
 
+
+
+# TODO Superpixels,
+
 class EdgeFinder:
     def __init__(self, img_path, k=0.2):
         self.path = img_path
@@ -158,7 +162,7 @@ class EdgeFinder:
         mag = self.gradient_magnitude()
         mag_smooth = gaussian(mag, sigma=sigma_grad)
 
-        #pot = mag_smooth * distance_smooth
+        #pot = distance_smooth / mag_smooth
         pot = mag_smooth * (1 - (distance_smooth / (distance_smooth.max() + 1e-9)))
         labels_ws = watershed(pot, markers, mask=mask)
 

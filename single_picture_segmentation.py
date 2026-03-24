@@ -19,7 +19,7 @@ def _():
 
 @app.cell
 def _(EdgeFinder):
-    path = "./YPGal/Snap-8157.czi"
+    path = "./YPGal/Snap-8145.czi"
     pic = EdgeFinder(path, k=0.45)
     return (pic,)
 
@@ -105,7 +105,7 @@ def _(np):
 
     from skimage.measure import find_contours, EllipseModel
 
-    def contour_features(region_mask, angle_thresh_deg=10, min_run=5):
+    def contour_features(region_mask, angle_thresh_deg=10):
         contours = find_contours(region_mask.astype(float), 0.5)
         if not contours:
             return None
@@ -115,7 +115,7 @@ def _(np):
         x = contour[:, 1]
         points = np.column_stack((x, y))
 
-        # --- ellipse fit using new API ---
+        # --- ellipse fit  ---
         ell = EllipseModel.from_estimate(points)
         if ell is None:
             return None
@@ -159,7 +159,6 @@ def _(np):
             "axis_lengths": ell.axis_lengths,
             "theta": ell.theta,
         }
-
     return (contour_features,)
 
 
@@ -170,18 +169,18 @@ def _(big_regions, contour_features, labels):
         for r in big_regions:
             mask = (labels == r.label)
             f = contour_features(mask)
-    
+
             if f is None:
                 print(f"Region {r.label}: no fit")
                 continue
-    
+
             print(
                 f"Region {r.label}: "
                 f"residual={f['mean_residual']:.3f}, "
                 f"straight_fraction={f['straight_fraction']:.3f}"
             )
             sum += f['straight_fraction']
-    
+
         print(f"avg: {sum /len(big_regions)}")
 
 
@@ -230,11 +229,11 @@ def _(big_regions, contour_features, labels):
                         f"LABEL 11,12"
                         f"Merged Regions {label_0} and {label_1}: "
                     )
-        
+
             # Generate masks for both
             mask_for0 = (labels == label_0)
             f0 = contour_features(mask_for0)
-        
+
             mask_for1 = (labels == label_1)
             f1 = contour_features(mask_for1)
 
@@ -249,7 +248,7 @@ def _(big_regions, contour_features, labels):
             new_labels = merge_two_touching_objects(labels, label_0, label_1)
             mask_merged = (new_labels == label_0)
             f_merged = contour_features(mask_merged)
-        
+
             if f_merged is None:
                 continue
 
@@ -274,15 +273,13 @@ def _(big_regions, contour_features, labels):
 
         return labels
 
-        
 
-    
+
+
     new_labels = decide_merge(labels, big_regions)
     #llnew_labels = merge_two_touching_objects(labels, 2, 1)
     #new_labels = merge_two_touching_objects(llnew_labels, 4, 5)
     #show_elliptic_features(big_regions, new_labels)
-
-
 
 
     return (new_labels,)
@@ -320,7 +317,7 @@ def _(big_regions, np):
 
         # The 3rd-order moments (3,0 and 0,3) measure asymmetry/skewness
         asymmetry_score = abs(nu[3, 0]) + abs(nu[0, 3])
-    
+
         print(f"Asymmetry Score: {asymmetry_score}")
         #ellipse_area = math.pi * big_regions[i].axis_minor_length * big_regions[i].axis_major_length
         #print(f"    - {big_regions[i].area / ellipse_area}")
