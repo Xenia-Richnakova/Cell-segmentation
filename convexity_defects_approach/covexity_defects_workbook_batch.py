@@ -9,8 +9,8 @@ def _():
     import marimo as mo
     import numpy as np
     from pathlib import Path
-    from convexity_defects import get_and_split_all_labels, plot_cells_w_numbers
-    return Path, get_and_split_all_labels, mo, np
+    from convexity_defects_enhanced_with_merged_attributes import get_and_split_all_labels, plot_cells_w_numbers
+    return Path, get_and_split_all_labels, mo, np, plot_cells_w_numbers
 
 
 @app.cell
@@ -152,7 +152,7 @@ def _(
         value=image_names[0] if image_names else None,
         label="Processed image to display",
     )
-    return selected, table
+    return results, selected, table
 
 
 @app.cell
@@ -162,17 +162,17 @@ def _(selected, table):
     return
 
 
-app._unparsable_cell(
-    r"""
-    if selected.value is None:
-        mo.md(\"No image passed the brightness threshold.\")
-        return
+@app.cell
+def _():
+    return
 
-    final_labels, deep_defects = results[selected.value]
-    mo.mpl.interactive(plot_cells_w_numbers(final_labels, deep_defects))
-    """,
-    name="_"
-)
+
+@app.cell
+def _(mo, plot_cells_w_numbers, results, selected):
+
+    final_labelss, deep_defectss = results[selected.value]
+    mo.mpl.interactive(plot_cells_w_numbers(final_labelss, deep_defectss))
+    return
 
 
 if __name__ == "__main__":

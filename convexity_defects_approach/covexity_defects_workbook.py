@@ -7,8 +7,14 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
-    from convexity_defects import get_and_split_all_labels, plot_cells_w_numbers
-    return get_and_split_all_labels, mo, plot_cells_w_numbers
+    from convexity_defects import get_and_split_all_labels, plot_cells_w_numbers, plot_gradient_heatmap_with_lines, plot_line_gradient_profile
+    return (
+        get_and_split_all_labels,
+        mo,
+        plot_cells_w_numbers,
+        plot_gradient_heatmap_with_lines,
+        plot_line_gradient_profile,
+    )
 
 
 @app.cell
@@ -31,13 +37,33 @@ def _(ui):
 def _(depth, get_and_split_all_labels, min_dist, sigma_grad):
     #  "../YPGal/Snap-8149.czi"
     # "../YPGal/Snap-8145.czi"
-    final_labels, deep_defects = get_and_split_all_labels( "../YPGal/Snap-8149.czi", min_dist.value, sigma_grad.value, depth.value)
-    return deep_defects, final_labels
+    # ../YPGal/Snap-8103.czi nejde
+    # "../YPGal/Snap-8151.czi" nejde
+    # "../YPGal/Snap-8153.czi"
+    final_labels, deep_defects, all_line_gradients, grad_mag_smooth = get_and_split_all_labels( "../YPGal/Snap-8153.czi", min_dist.value, sigma_grad.value, depth.value)
+    return all_line_gradients, deep_defects, final_labels, grad_mag_smooth
 
 
 @app.cell
 def _(deep_defects, final_labels, mo, plot_cells_w_numbers):
     mo.mpl.interactive(plot_cells_w_numbers(final_labels, deep_defects))
+    return
+
+
+@app.cell
+def _(
+    all_line_gradients,
+    grad_mag_smooth,
+    mo,
+    plot_gradient_heatmap_with_lines,
+):
+    mo.mpl.interactive(plot_gradient_heatmap_with_lines(grad_mag_smooth, all_line_gradients))
+    return
+
+
+@app.cell
+def _(all_line_gradients, mo, plot_line_gradient_profile):
+    mo.mpl.interactive(plot_line_gradient_profile(all_line_gradients))
     return
 
 

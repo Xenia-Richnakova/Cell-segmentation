@@ -16,8 +16,6 @@ from PIL import Image
 
 
 
-# TODO Superpixels,
-
 class EdgeFinder:
     def __init__(self, img_path, k=0.2):
         self.path = img_path
