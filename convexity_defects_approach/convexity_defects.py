@@ -7,6 +7,7 @@ from counting_cells import EdgeFinder
 from skimage.draw import line as skline
 from skimage.filters import gaussian
 
+# TODO if convexity defect too high, then do not analyze its gradient profile, if lower then analyze
 # ================== Helpers =======================
 
 def get_line_pixels(pt1, pt2):
@@ -22,10 +23,12 @@ def sample_gradient_on_line(gradient_img, pt1, pt2):
     coords = list(zip(cc, rr))  # back to (x, y) for plotting if needed
     return coords, values
 
-def split_touching_cells_by_defects(binary_mask, depth_threshold=5.0, gradient_img=None):
+def split_touching_cells_by_defects(binary_mask, depth_threshold=50.0, gradient_img=None):
+    # converts to 0 and 255 for OpenCV
     binary_mask = binary_mask.astype(bool)
     mask_uint8 = (binary_mask.astype(np.uint8) * 255)
 
+    # find outer contour around object
     contours, _ = cv2.findContours(
         mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -34,6 +37,7 @@ def split_touching_cells_by_defects(binary_mask, depth_threshold=5.0, gradient_i
 
     cnt = max(contours, key=cv2.contourArea)
 
+    # build convex hull
     hull = cv2.convexHull(cnt, returnPoints=False)
     if hull is None or len(hull) < 3:
         return label(binary_mask), [], None
@@ -42,13 +46,17 @@ def split_touching_cells_by_defects(binary_mask, depth_threshold=5.0, gradient_i
     if defects is None:
         return label(binary_mask), [], None
 
+    # s: start point on contour, #e: end point on contour #f: farthest point of the dent, d: depth of the dent
     deep_defects = []
     for i in range(defects.shape[0]):
         s, e, f, d = defects[i, 0]
+        # actuall distance between the convex hull (outer boundary) and the actual contour (inward dent)
         actual_depth = d / 256.0
+        # f is index of farthest point on the contour cnt
         far_point = tuple(cnt[f][0])
 
         if actual_depth > depth_threshold:
+            print(f"#{i} {actual_depth} > {depth_threshold}")
             deep_defects.append((i, actual_depth, far_point))
 
     if len(deep_defects) < 2:
@@ -75,6 +83,7 @@ def split_touching_cells_by_defects(binary_mask, depth_threshold=5.0, gradient_i
             "min": float(np.min(values)),
         }
 
+    # draw line - black line have values 0 -> split blob
     cut_mask = mask_uint8.copy()
     cv2.line(cut_mask, pt1, pt2, 0, thickness=2)
 
@@ -121,35 +130,26 @@ def get_and_split_all_labels(imgPath, dist, sigma_grad, depth):
 
 from skimage.measure import regionprops
 
+from scipy.ndimage import zoom
+
 def plot_cells_w_numbers(labels, deep_defects):
     fig, ax = plt.subplots(figsize=(6, 6))
-    ax.imshow(labels, cmap="nipy_spectral")
 
-    # plot cell numbers
-    """
-    for region in regionprops(labels):
-        y, x = region.centroid
-        ax.text(
-            x, y,
-            str(region.label),
-            color="white",
-            fontsize=13,
-            ha="center",
-            va="center",
-        )"""
+    # upscale labels (IMPORTANT: order=0 keeps labels intact)
+    labels_up = zoom(labels, 4, order=0)
 
-    # plot deep defect numbers
+    # now you CAN use smooth interpolation safely
+    ax.imshow(labels_up, cmap="nipy_spectral", interpolation="bilinear")
+
+    # scale defect points as well
+    scale = 4
     for defect_idx, depth, far_point in deep_defects:
         x, y = far_point
+        x *= scale
+        y *= scale
+
         ax.plot(x, y, "wo", markersize=4)
-        ax.text(
-            x + 5, y - 4,
-            str(defect_idx),
-            color="white",
-            fontsize=10,
-            ha="left",
-            va="center",
-        )
+        ax.text(x + 5, y - 4, str(defect_idx), color="white", fontsize=10)
 
     ax.set_axis_off()
     return fig
@@ -186,7 +186,7 @@ def plot_gradient_heatmap_with_lines(grad_mag_smooth, line_gradients):
     ax.axis("off")
     return fig
 
-
+# =========================== Profile analysis start ==============================
 def plot_line_gradient_profile(all_line_gradients):
     fig, ax = plt.subplots(figsize=(7, 4))
 
@@ -202,3 +202,71 @@ def plot_line_gradient_profile(all_line_gradients):
     ax.grid(True, alpha=0.3)
     ax.legend()
     return fig
+
+
+import numpy as np
+
+def analyze_line_gradients_global_min(all_line_gradients):
+    results = []
+
+    for i, line_gradient in enumerate(all_line_gradients):
+        values = np.asarray(line_gradient["values"], dtype=float)
+
+        if len(values) < 2:
+            results.append({
+                "line_index": i,
+                "pt1": line_gradient["pt1"],
+                "pt2": line_gradient["pt2"],
+                "error": "Profile too short"
+            })
+            continue
+
+        # first global maximum from the left
+        max_idx = int(np.argmax(values))
+        max_val = float(values[max_idx])
+
+        # global minimum of the whole profile
+        min_idx = int(np.argmin(values))
+        min_val = float(values[min_idx])
+
+        # analyze the segment between those two points
+        left_idx = min(max_idx, min_idx)
+        right_idx = max(max_idx, min_idx)
+        segment = values[left_idx:right_idx + 1]
+
+        diffs = np.diff(segment)
+
+        if len(diffs) == 0:
+            max_increase = 0.0
+            max_increase_from = left_idx
+            max_increase_to = left_idx
+        else:
+            best_diff_idx = int(np.argmax(diffs))
+            max_increase = float(diffs[best_diff_idx])
+            max_increase_from = left_idx + best_diff_idx
+            max_increase_to = left_idx + best_diff_idx + 1
+
+        total_change = float(min_val - max_val)
+        total_drop = float(max_val - min_val)
+
+        results.append({
+            "line_index": i,
+            "pt1": line_gradient["pt1"],
+            "pt2": line_gradient["pt2"],
+            "max_idx": max_idx,
+            "max_val": max_val,
+            "global_min_idx": min_idx,
+            "global_min_val": min_val,
+            "largest_increase_derivative": max_increase,
+            "largest_increase_from_idx": max_increase_from,
+            "largest_increase_to_idx": max_increase_to,
+            "total_change_max_to_global_min": total_change,
+            "total_drop_max_to_global_min": total_drop,
+        })
+
+    return results
+
+
+# =========================== Profile analysis END ==============================
+
+

@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.18.4"
+__generated_with = "0.21.1"
 app = marimo.App(width="medium")
 
 
@@ -9,16 +9,25 @@ def _():
     import marimo as mo
     import numpy as np
     from pathlib import Path
-    from convexity_defects_enhanced_with_merged_attributes import get_and_split_all_labels, plot_cells_w_numbers
-    return Path, get_and_split_all_labels, mo, np, plot_cells_w_numbers
+    from convexity_defects import get_and_split_all_labels, plot_cells_w_numbers
+
+    return Path, get_and_split_all_labels, mo, np
+
+
+@app.cell
+def _():
+    import torch
+    print(torch.cuda.is_available())
+    print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU")
+    return
 
 
 @app.cell
 def _(mo):
-    folder = mo.ui.text(value="../little_folder", label="Folder with images")
+    folder = mo.ui.text(value="./little_folder", label="Folder with images")
     sigma_grad = mo.ui.slider(0.1, 100, 0.1, 22, label="Sigma (gradient smoothing)")
     min_dist = mo.ui.slider(1, 300, value=220, label="Min distance")
-    depth = mo.ui.slider(1, 30, value=20, label="Depth threshold")
+    depth = mo.ui.slider(1, 100, value=50, label="Depth threshold")
     brightness_threshold = mo.ui.slider(100, 2000, value=1500, label="Brightness threshold")
 
     ui = mo.vstack([folder, sigma_grad, min_dist, depth, brightness_threshold])
@@ -46,19 +55,14 @@ def _(np):
 
         if lower.endswith(".czi"):
             if czifile is None:
-                raise ImportError(
-                    "For .czi brightness reading, install czifile: pip install czifile"
-                )
+                raise ImportError("For .czi files install czifile")
             arr = czifile.imread(path)
         else:
             arr = imread(path)
 
         arr = np.asarray(arr)
-
-        # remove singleton dimensions
         arr = np.squeeze(arr)
 
-        # if multi-channel, average over channels
         if arr.ndim >= 3:
             arr = arr.mean(axis=tuple(range(arr.ndim - 2)))
 
@@ -67,7 +71,8 @@ def _(np):
     def mean_brightness(path):
         img = load_image_for_brightness(path)
         return float(img.mean())
-    return (mean_brightness,)
+
+    return czifile, imread, mean_brightness
 
 
 @app.cell
@@ -122,7 +127,7 @@ def _(
                 continue
 
             try:
-                final_labels, deep_defects = get_and_split_all_labels(
+                final_labels, deep_defects, _, _ = get_and_split_all_labels(
                     str(img_path),
                     min_dist.value,
                     sigma_grad.value,
@@ -163,15 +168,69 @@ def _(selected, table):
 
 
 @app.cell
-def _():
+def _(results):
+    print(results)
     return
 
 
 @app.cell
-def _(mo, plot_cells_w_numbers, results, selected):
+def _(Path, czifile, folder, imread, np, results):
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
 
-    final_labelss, deep_defectss = results[selected.value]
-    mo.mpl.interactive(plot_cells_w_numbers(final_labelss, deep_defectss))
+    pdf_path = "../segmentation_results.pdf"
+
+    with PdfPages(pdf_path) as pdf:
+
+        for image, (labels, defects) in results.items():
+            path = str(Path(folder.value) / image)
+
+            # --- load image ---
+            if image.lower().endswith(".czi"):
+                arr = czifile.imread(path)
+            else:
+                arr = imread(path)
+
+            arr = np.asarray(arr)
+            arr = np.squeeze(arr)
+
+            if arr.ndim >= 3:
+                arr = arr.mean(axis=tuple(range(arr.ndim - 2)))
+
+            original = arr.astype(np.float32)
+
+            # --- create figure ---
+            fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+
+            axes[0].imshow(original, cmap="gray")
+            axes[0].set_title(f"Original: {image}")
+            axes[0].axis("off")
+
+            axes[1].imshow(labels, cmap="nipy_spectral")
+            axes[1].set_title("Segmentation")
+            axes[1].axis("off")
+
+            # --- overlay defects ---
+            for defect_idx, d, far_point in defects:
+                x, y = far_point
+                axes[1].plot(x, y, "wo", markersize=4)
+                axes[1].text(x + 5, y - 4, str(defect_idx), color="white", fontsize=8)
+
+            plt.tight_layout()
+
+            # ✅ save this figure as one page in PDF
+            pdf.savefig(fig)
+
+            plt.close(fig)  # IMPORTANT to free memory
+
+    print(f"Saved PDF to: {pdf_path}")
+    return
+
+
+@app.cell
+def _():
+    import os
+    print(os.path.abspath("../segmentation_results.pdf"))
     return
 
 

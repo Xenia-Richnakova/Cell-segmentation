@@ -43,9 +43,16 @@ class objectExtractor:
 
         # --- load image ---
         if image_czi:
-            czi  = CziFile(image_path)
+            czi = CziFile(image_path)
             data = czi.asarray()
-            img = data[0, :, :, 0]
+            img = np.squeeze(data)
+
+            # if still not 2D, reduce extra dims safely
+            while img.ndim > 2:
+                img = img[0]
+
+            if img.ndim != 2:
+                raise ValueError(f"Expected 2D image after squeezing, got shape {img.shape}")
         else:
             img = io.imread(image_path)
 
@@ -139,8 +146,8 @@ class objectExtractor:
         self.binary_global = self.gray_smooth - noise_suppression_var > self.thresh
 
         # Remove small objects (noise) and fill small holes
-        cleaned = morphology.remove_small_objects(self.binary_global, max_size=500)
-        cleaned = morphology.remove_small_holes(cleaned, max_size=500)
+        cleaned = morphology.remove_small_objects(self.binary_global, min_size=500)
+        cleaned = morphology.remove_small_holes(cleaned, area_threshold=500)
 
         # Further clean-up - close narrow gaps
         selem = disk(3)

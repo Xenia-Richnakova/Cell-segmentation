@@ -82,7 +82,7 @@ class EdgeFinder:
 
     def plot_cells_w_numbers(self, labels, big_regions):
         fig, ax = plt.subplots(figsize=(6, 6))
-        ax.imshow(labels, cmap="nipy_spectral")
+        ax.imshow(labels, cmap="nipy_spectral", interpolation="none")
         for i, region in enumerate(big_regions, start=1):
             print(f"cell: {i} has label: {region.label}")
             y, x = region.centroid
