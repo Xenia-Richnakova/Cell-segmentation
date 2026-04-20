@@ -7,7 +7,6 @@ from counting_cells import EdgeFinder
 from skimage.draw import line as skline
 from skimage.filters import gaussian
 
-# TODO if convexity defect too high, then do not analyze its gradient profile, if lower then analyze
 # ================== Helpers =======================
 
 def get_line_pixels(pt1, pt2):
@@ -24,51 +23,47 @@ def sample_gradient_on_line(gradient_img, pt1, pt2):
     return coords, values
 
 def split_touching_cells_by_defects(binary_mask, depth_threshold=50.0, gradient_img=None):
-    # converts to 0 and 255 for OpenCV
     binary_mask = binary_mask.astype(bool)
     mask_uint8 = (binary_mask.astype(np.uint8) * 255)
 
-    # find outer contour around object
     contours, _ = cv2.findContours(
         mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
     if not contours:
-        return label(binary_mask), [], None
+        return label(binary_mask), [], None, None
 
     cnt = max(contours, key=cv2.contourArea)
 
-    # build convex hull
-    hull = cv2.convexHull(cnt, returnPoints=False)
-    if hull is None or len(hull) < 3:
-        return label(binary_mask), [], None
+    # hull indices for convexity defects
+    hull_idx = cv2.convexHull(cnt, returnPoints=False)
+    if hull_idx is None or len(hull_idx) < 3:
+        return label(binary_mask), [], None, None
 
-    defects = cv2.convexityDefects(cnt, hull)
+    # hull points for plotting
+    hull_points = cv2.convexHull(cnt, returnPoints=True)
+    hull_points = hull_points[:, 0, :]   # shape (N, 2)
+
+    defects = cv2.convexityDefects(cnt, hull_idx)
     if defects is None:
-        return label(binary_mask), [], None
+        return label(binary_mask), [], None, None
 
-    # s: start point on contour, #e: end point on contour #f: farthest point of the dent, d: depth of the dent
     deep_defects = []
     for i in range(defects.shape[0]):
         s, e, f, d = defects[i, 0]
-        # actuall distance between the convex hull (outer boundary) and the actual contour (inward dent)
         actual_depth = d / 256.0
-        # f is index of farthest point on the contour cnt
         far_point = tuple(cnt[f][0])
 
         if actual_depth > depth_threshold:
-            print(f"#{i} {actual_depth} > {depth_threshold}")
             deep_defects.append((i, actual_depth, far_point))
 
+    # not enough valid defects -> no split -> no hull returned
     if len(deep_defects) < 2:
-        return label(binary_mask), deep_defects, None
+        return label(binary_mask), deep_defects, None, None
 
     deep_defects.sort(reverse=True, key=lambda x: x[1])
 
     idx1, depth1, pt1 = deep_defects[0]
     idx2, depth2, pt2 = deep_defects[1]
-
-    print(f"Selected defect #{idx1} at {pt1} with depth {depth1:.2f}")
-    print(f"Selected defect #{idx2} at {pt2} with depth {depth2:.2f}")
 
     line_gradient = None
     if gradient_img is not None:
@@ -83,15 +78,14 @@ def split_touching_cells_by_defects(binary_mask, depth_threshold=50.0, gradient_
             "min": float(np.min(values)),
         }
 
-    # draw line - black line have values 0 -> split blob
     cut_mask = mask_uint8.copy()
     cv2.line(cut_mask, pt1, pt2, 0, thickness=2)
 
-    return label(cut_mask > 0), deep_defects, line_gradient
+    return label(cut_mask > 0), deep_defects, line_gradient, hull_points
 
-def get_and_split_all_labels(imgPath, dist, sigma_grad, depth):
-    pic = EdgeFinder(imgPath, k=0.5)
-    labels, _ = pic.watershed(min_distance=dist, sigma_grad=sigma_grad)
+def get_and_split_all_labels(imgPath, dist, sigma_grad, depth, k=0.5):
+    pic = EdgeFinder(imgPath, k=k)
+    labels, markers = pic.watershed(min_distance=dist, sigma_grad=sigma_grad)
 
     grad_mag = pic.gradient_magnitude()
     grad_mag_smooth = gaussian(grad_mag, sigma=sigma_grad)
@@ -99,6 +93,7 @@ def get_and_split_all_labels(imgPath, dist, sigma_grad, depth):
     final_labels = np.zeros_like(labels, dtype=np.int32)
     all_deep_defects = []
     all_line_gradients = []
+    all_hulls = []
     current_label = 1
 
     for lbl in np.unique(labels):
@@ -106,7 +101,7 @@ def get_and_split_all_labels(imgPath, dist, sigma_grad, depth):
             continue
 
         one_blob = labels == lbl
-        split, deep_defects, line_gradient = split_touching_cells_by_defects(
+        split, deep_defects, line_gradient, hull_points = split_touching_cells_by_defects(
             one_blob,
             depth_threshold=depth,
             gradient_img=grad_mag_smooth
@@ -118,13 +113,20 @@ def get_and_split_all_labels(imgPath, dist, sigma_grad, depth):
 
         all_deep_defects.extend(deep_defects)
 
+        # store only truly split objects
         if line_gradient is not None:
             line_gradient["original_label"] = int(lbl)
             all_line_gradients.append(line_gradient)
 
+            if hull_points is not None:
+                all_hulls.append({
+                    "original_label": int(lbl),
+                    "hull_points": hull_points
+                })
+
         current_label = final_labels.max() + 1
 
-    return final_labels, all_deep_defects, all_line_gradients, grad_mag_smooth
+    return final_labels, all_deep_defects, all_line_gradients, grad_mag_smooth, markers, all_hulls
 
 
 
@@ -166,23 +168,23 @@ def plot_gradient_heatmap_with_lines(grad_mag_smooth, line_gradients):
         x1, y1 = pt1
         x2, y2 = pt2
 
-        ax.plot([x1, x2], [y1, y2], color="cyan", linewidth=2)
-        ax.plot(x1, y1, "wo", markersize=4)
-        ax.plot(x2, y2, "wo", markersize=4)
+        #ax.plot([x1, x2], [y1, y2], color="cyan", linewidth=2)
+        #ax.plot(x1, y1, "wo", markersize=4)
+        #ax.plot(x2, y2, "wo", markersize=4)
 
         mx = (x1 + x2) / 2
         my = (y1 + y2) / 2
-        ax.text(
-            mx, my,
-            f"{item['mean']:.2f}",
-            color="white",
-            fontsize=9,
-            ha="center",
-            va="center",
-            bbox=dict(facecolor="black", alpha=0.5, pad=1),
-        )
+        #ax.text(
+        #    mx, my,
+        #    f"{item['mean']:.2f}",
+        #    color="white",
+        #    fontsize=9,
+        #    ha="center",
+        #    va="center",
+        #    bbox=dict(facecolor="black", alpha=0.5, pad=1),
+        #)
 
-    ax.set_title("Gradient magnitude heat map with cut lines")
+    #ax.set_title("Gradient magnitude heat map with cut lines")
     ax.axis("off")
     return fig
 

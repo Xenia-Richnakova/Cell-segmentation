@@ -24,19 +24,21 @@ def _():
 
 @app.cell
 def _(mo):
-    folder = mo.ui.text(value="./little_folder", label="Folder with images")
+    folder = mo.ui.text(value="./YPD", label="Folder with images")
     sigma_grad = mo.ui.slider(0.1, 100, 0.1, 22, label="Sigma (gradient smoothing)")
-    min_dist = mo.ui.slider(1, 300, value=220, label="Min distance")
+    min_dist = mo.ui.slider(1, 300, value=200, label="Min distance")
     depth = mo.ui.slider(1, 100, value=50, label="Depth threshold")
     brightness_threshold = mo.ui.slider(100, 2000, value=1500, label="Brightness threshold")
 
     ui = mo.vstack([folder, sigma_grad, min_dist, depth, brightness_threshold])
-    return brightness_threshold, depth, folder, min_dist, sigma_grad, ui
+    return brightness_threshold, depth, folder, min_dist, sigma_grad
 
 
-@app.cell
-def _(ui):
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ui
+    """)
     return
 
 
@@ -231,6 +233,51 @@ def _(Path, czifile, folder, imread, np, results):
 def _():
     import os
     print(os.path.abspath("../segmentation_results.pdf"))
+    return
+
+
+@app.cell
+def _(mo):
+    # UI: choose output folder
+    output_folder = mo.ui.text(
+        value="./segmented_output",
+        label="Output folder for PNG masks"
+    )
+
+    save_button = mo.ui.button(label="Save PNGs")
+
+    ui_vstack = mo.vstack([output_folder, save_button])
+    return output_folder, ui_vstack
+
+
+@app.cell
+def _(ui_vstack):
+    ui_vstack
+    return
+
+
+@app.cell
+def _(Path, np, output_folder, results):
+    import cv2
+
+
+    out_path = Path(output_folder.value)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    for img, (lbls, defectss) in results.items():
+
+
+        # 🔑 normalize labels to 0–255
+        labels_norm = lbls.astype(np.float32)
+
+        labels_norm = (labels_norm / labels_norm.max()) * 255.0
+        labels_uint8 = labels_norm.astype(np.uint8)
+
+        # output filename
+        out_name = Path(img).stem + ".png"
+        save_path = out_path / out_name
+
+        cv2.imwrite(str(save_path), labels_uint8)
     return
 
 
